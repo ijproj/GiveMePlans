@@ -9,7 +9,8 @@
  *   - Hashtag Search: recent and top posts for hashtags such as #londonevents.
  *
  * Posts are free text, so each caption is scanned for a date (with chrono-node)
- * and kept only if that date falls in the requested range.
+ * and kept only if that date falls in the requested range. Hashtags in the
+ * caption become tags, which ranking.ts uses to match interests.
  *
  * Requirements (all free, but set up in Meta's developer dashboard):
  *   - An Instagram Business or Creator account linked to a Facebook Page.
@@ -25,7 +26,7 @@
  * ever calls the Graph API. Without credentials it simply returns nothing.
  */
 import * as chrono from "chrono-node";
-import type { DiscoveredEvent, EventQuery } from "../events";
+import type { EventQuery, EventSource, GeoPoint, SourceEvent } from "./types";
 
 /** Graph API version; override if Meta retires this one. */
 const GRAPH_VERSION = process.env.INSTAGRAM_GRAPH_VERSION || "v23.0";
@@ -76,7 +77,7 @@ function hashtagsForLocation(location: string): string[] {
   return place ? [`${place}events`, `${place}whatson`] : [];
 }
 
-/** Returns null when Instagram isn't set up, so callers can skip it quietly. */
+/** Returns null when Instagram isn't set up, so the search can skip it quietly. */
 function readConfig(location: string): InstagramConfig | null {
   const userId = process.env.INSTAGRAM_USER_ID?.trim();
   const accessToken = process.env.INSTAGRAM_ACCESS_TOKEN?.trim();
@@ -88,11 +89,6 @@ function readConfig(location: string): InstagramConfig | null {
     accounts: listFromEnv(process.env.INSTAGRAM_ACCOUNTS),
     hashtags: hashtags.length ? hashtags : hashtagsForLocation(location),
   };
-}
-
-/** True when the Instagram source has credentials and will run. */
-export function isInstagramConfigured(): boolean {
-  return Boolean(process.env.INSTAGRAM_USER_ID && process.env.INSTAGRAM_ACCESS_TOKEN);
 }
 
 /** GET a Graph API path and return its JSON, turning API errors into readable ones. */
@@ -167,12 +163,20 @@ function isoDate(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/** Format hours and minutes as 24-hour HH:MM, the format SourceEvent expects. */
+function hhmm(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 /**
  * Captions often give the time apart from the date ("Sat 24 Oct ... doors 7pm"),
  * which chrono reads as two separate results; fall back to the first clock time.
  */
 function findLooseTime(caption: string): string {
-  return caption.match(/\b\d{1,2}(?:[:.]\d{2})?\s?(?:am|pm)\b/i)?.[0] ?? "";
+  const match = caption.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s?(am|pm)\b/i);
+  if (!match) return "";
+  const hour = (Number(match[1]) % 12) + (match[3].toLowerCase() === "pm" ? 12 : 0);
+  return hour < 24 ? hhmm(hour, Number(match[2] ?? 0)) : "";
 }
 
 /** Find the first date in the caption that falls in the query's range, with its time if stated. */
@@ -181,9 +185,8 @@ function findEventDate(caption: string, postedAt: Date, query: EventQuery): { da
   for (const result of chrono.parse(caption, postedAt, { forwardDate: true })) {
     const date = isoDate(result.start.date());
     if (date < query.startDate || date > query.endDate) continue;
-    const time = result.start.isCertain("hour")
-      ? result.start.date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
-      : findLooseTime(caption);
+    const start = result.start.date();
+    const time = result.start.isCertain("hour") ? hhmm(start.getHours(), start.getMinutes()) : findLooseTime(caption);
     return { date, time };
   }
   return null;
@@ -195,88 +198,80 @@ function findVenue(caption: string): string {
   return match?.[1].trim().slice(0, 120) ?? "";
 }
 
-/** Pull a price: "free entry", "£5", "£10 on the door". */
-function findPrice(caption: string): string {
-  if (/\bfree\s+(entry|event|admission|to attend)\b|\bentry\s+is\s+free\b/i.test(caption)) return "Free";
-  return caption.match(/[£$€]\s?\d+(?:\.\d{2})?/)?.[0].replace(/\s/g, "") ?? "";
+/** Pull a price for display and as a number for budget matching: "free entry", "£5", "£10 on the door". */
+function findPrice(caption: string): { price: string; minPrice: number | null } {
+  if (/\bfree\s+(entry|event|admission|to attend)\b|\bentry\s+is\s+free\b/i.test(caption)) {
+    return { price: "Free", minPrice: 0 };
+  }
+  const match = caption.match(/[£$€]\s?(\d+(?:\.\d{2})?)/);
+  return match ? { price: match[0].replace(/\s/g, ""), minPrice: Number(match[1]) } : { price: "", minPrice: null };
 }
 
-/**
- * Score a post against the person's interests. There is no model to judge fit
- * here, so this counts interest words found in the caption: a rough signal,
- * but enough to sort a handful of posts sensibly.
- */
-function scorePost(caption: string, price: string, query: EventQuery): { score: number; matched: string[] } {
-  const text = caption.toLowerCase();
-  // "Food & drink" matches on "food" or "drink"; words under 4 letters are too noisy to count.
-  const matched = query.preferences.interests.filter((interest) =>
-    interest
-      .toLowerCase()
-      .split(/[^\p{L}]+/u)
-      .some((word) => word.length >= 4 && text.includes(word)),
-  );
-  let score = 40 + matched.length * 20;
-  const wantsCheap = query.preferences.budget === "free" || query.preferences.budget === "low";
-  if (wantsCheap && price === "Free") score += 10;
-  return { score: Math.min(score, 100), matched };
+/** Hashtags in the caption, e.g. "#jazz #bristolevents" gives ["jazz", "bristolevents"]. */
+function findHashtags(caption: string): string[] {
+  return [...new Set((caption.match(/#[\p{L}\p{N}_]+/gu) ?? []).map((tag) => tag.slice(1).toLowerCase()))];
 }
 
 /** Turn a post into an event, or null if its caption doesn't mention a date in range. */
-function postToEvent(post: InstagramPost, query: EventQuery): DiscoveredEvent | null {
+function postToEvent(post: InstagramPost, query: EventQuery): SourceEvent | null {
   if (!post.caption || !post.permalink) return null;
   const postedAt = post.timestamp ? new Date(post.timestamp) : new Date();
   const when = findEventDate(post.caption, postedAt, query);
   if (!when) return null;
 
-  const price = findPrice(post.caption);
-  const { score, matched } = scorePost(post.caption, price, query);
   // The first non-empty line of a caption is usually the event's name.
   const firstLine = post.caption.split("\n").find((line) => line.trim())?.trim() ?? "Instagram event";
 
   return {
+    // Plain "Instagram" so ranking can match it against the sites the user picked.
+    source: "Instagram",
     title: firstLine.slice(0, 100),
     date: when.date,
     time: when.time,
     venue: findVenue(post.caption),
     url: post.permalink,
-    category: matched[0] ?? "Community event",
-    summary: post.caption.replace(/\s+/g, " ").slice(0, 240),
-    price,
-    matchScore: score,
-    matchReason: matched.length
-      ? `Instagram post (${post.foundVia}) mentioning ${matched.join(", ").toLowerCase()}.`
-      : `Instagram post (${post.foundVia}) announcing an event in your dates.`,
+    category: "Community event",
+    tags: findHashtags(post.caption),
+    // Lead with where it was found, so people can tell a venue's own post from a hashtag hit.
+    description: `Via ${post.foundVia}: ${post.caption.replace(/\s+/g, " ").slice(0, 400)}`,
+    ...findPrice(post.caption),
   };
 }
 
-/**
- * Find events in Instagram posts. Returns [] when Instagram isn't configured.
- * A failing account or hashtag is logged and skipped so it can't sink the search.
- */
-export async function searchInstagram(query: EventQuery): Promise<DiscoveredEvent[]> {
-  const config = readConfig(query.preferences.location);
-  if (!config) return [];
+/** Event source for posts from chosen Instagram accounts and hashtags. */
+export const instagram: EventSource = {
+  name: "Instagram",
+  isConfigured: () => Boolean(process.env.INSTAGRAM_USER_ID && process.env.INSTAGRAM_ACCESS_TOKEN),
 
-  const lookups = [
-    ...config.accounts.map((name) => fetchAccountPosts(name, config)),
-    ...config.hashtags.map((tag) => fetchHashtagPosts(tag, config)),
-  ];
-  const results = await Promise.allSettled(lookups);
+  /**
+   * A failing account or hashtag is logged and skipped so it can't sink the
+   * whole source. The geocoded city, when known, gives cleaner default hashtags.
+   */
+  async search(query: EventQuery, location: GeoPoint | null): Promise<SourceEvent[]> {
+    const config = readConfig(location?.city ?? query.preferences.location);
+    if (!config) return [];
 
-  const seen = new Set<string>();
-  const events: DiscoveredEvent[] = [];
-  for (const result of results) {
-    if (result.status === "rejected") {
-      console.error(result.reason);
-      continue;
+    const lookups = [
+      ...config.accounts.map((name) => fetchAccountPosts(name, config)),
+      ...config.hashtags.map((tag) => fetchHashtagPosts(tag, config)),
+    ];
+    const results = await Promise.allSettled(lookups);
+
+    const seen = new Set<string>();
+    const events: SourceEvent[] = [];
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error(result.reason);
+        continue;
+      }
+      for (const post of result.value) {
+        // The same post can show up under several hashtags.
+        if (seen.has(post.id)) continue;
+        seen.add(post.id);
+        const event = postToEvent(post, query);
+        if (event) events.push(event);
+      }
     }
-    for (const post of result.value) {
-      // The same post can show up under several hashtags.
-      if (seen.has(post.id)) continue;
-      seen.add(post.id);
-      const event = postToEvent(post, query);
-      if (event) events.push(event);
-    }
-  }
-  return events.sort((a, b) => b.matchScore - a.matchScore);
-}
+    return events;
+  },
+};
