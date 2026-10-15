@@ -95,7 +95,7 @@ export default function Home() {
         <p className="mt-2 text-muted">
           {showQuestionnaire && !preferences
             ? "A few quick questions, then we'll find events that suit you."
-            : "Events picked for you from across the web."}
+            : "Events picked for you from Ticketmaster and Skiddle."}
         </p>
       </header>
 
@@ -156,7 +156,7 @@ export default function Home() {
       )}
 
       {!showQuestionnaire && loading && (
-        <p className="mt-8 text-center text-muted">Searching the web for events. This usually takes a minute or two.</p>
+        <p className="mt-8 text-center text-muted">Searching event sites…</p>
       )}
 
       {!showQuestionnaire && error && (
@@ -194,8 +194,10 @@ export default function Home() {
                   {Math.round(event.matchScore)}%
                 </span>
               </div>
-              <p className="mt-3">{event.summary}</p>
-              <p className="mt-2 text-sm text-muted">{event.matchReason}</p>
+              {event.description && <p className="mt-3 line-clamp-3">{event.description}</p>}
+              <p className="mt-2 text-sm text-muted">
+                {event.matchReason} Via {event.source}.
+              </p>
             </li>
           ))}
         </ul>
