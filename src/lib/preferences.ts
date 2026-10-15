@@ -37,6 +37,7 @@ export const SOURCE_OPTIONS = [
   "Skiddle",
   "Fatsoma",
   "Facebook Events",
+  "Instagram",
   "Time Out",
   "Local venue websites",
 ] as const;
