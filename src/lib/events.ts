@@ -14,6 +14,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { describePreferences, type Preferences } from "./preferences";
+import { searchInstagram } from "./sources/instagram";
 
 /** Claude model used for both steps. */
 const MODEL = "claude-opus-5-5";
@@ -154,10 +155,25 @@ async function extractAndRank(query: EventQuery, findings: string): Promise<Disc
   return [...response.parsed_output.events].sort((a, b) => b.matchScore - a.matchScore);
 }
 
-/** Find events for a query, best matches first. Throws on API or parsing failure. */
-export async function findEvents(query: EventQuery): Promise<DiscoveredEvent[]> {
+/** Web search then ranking; empty findings skip the second call entirely. */
+async function findWebEvents(query: EventQuery): Promise<DiscoveredEvent[]> {
   const findings = await searchForEvents(query);
-  // Nothing found: skip the second call entirely.
   if (!findings.trim()) return [];
   return extractAndRank(query, findings);
+}
+
+/**
+ * Find events for a query, best matches first. Throws on API or parsing failure.
+ * Instagram runs alongside the web search; it returns [] when not configured,
+ * and its failures are swallowed so they never break the main search.
+ */
+export async function findEvents(query: EventQuery): Promise<DiscoveredEvent[]> {
+  const [web, instagram] = await Promise.all([
+    findWebEvents(query),
+    searchInstagram(query).catch((error) => {
+      console.error("Instagram search failed", error);
+      return [];
+    }),
+  ]);
+  return [...web, ...instagram].sort((a, b) => b.matchScore - a.matchScore);
 }
