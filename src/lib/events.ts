@@ -2,7 +2,7 @@
  * Server-side event discovery using free event APIs.
  *
  * 1. Geocode the user's location (OpenStreetMap, no key).
- * 2. Ask every configured source (Ticketmaster, Skiddle) for events in the
+ * 2. Ask every configured source (Ticketmaster, Skiddle, Instagram) for events in the
  *    date range, in parallel. A failing source is logged and skipped.
  * 3. Rank everything against the questionnaire answers (see ranking.ts).
  *
@@ -10,6 +10,7 @@
  */
 import { geocode } from "./geocode";
 import { rankEvents, type DiscoveredEvent } from "./ranking";
+import { instagram } from "./sources/instagram";
 import { skiddle } from "./sources/skiddle";
 import { ticketmaster } from "./sources/ticketmaster";
 import type { EventQuery, EventSource } from "./sources/types";
@@ -17,7 +18,7 @@ import type { EventQuery, EventSource } from "./sources/types";
 export type { DiscoveredEvent } from "./ranking";
 export type { EventQuery } from "./sources/types";
 
-const SOURCES: EventSource[] = [ticketmaster, skiddle];
+const SOURCES: EventSource[] = [ticketmaster, skiddle, instagram];
 
 /** Thrown when the server has no API keys set; the message is safe to show users. */
 export class NoSourcesConfiguredError extends Error {
