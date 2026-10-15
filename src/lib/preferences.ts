@@ -27,6 +27,20 @@ export const INTEREST_OPTIONS = [
   "Family-friendly",
 ] as const;
 
+/** Preset event sites. Users can also add their own (e.g. a favourite venue's listings page). */
+export const SOURCE_OPTIONS = [
+  "Eventbrite",
+  "Meetup",
+  "Ticketmaster",
+  "Dice",
+  "Resident Advisor",
+  "Skiddle",
+  "Fatsoma",
+  "Facebook Events",
+  "Time Out",
+  "Local venue websites",
+] as const;
+
 /* Single- and multi-choice answers, keyed by the value we store, mapped to the label we show. */
 
 export const TIME_OPTIONS = {
@@ -65,6 +79,8 @@ export const PreferencesSchema = z.object({
   budget: z.enum(Object.keys(BUDGET_OPTIONS) as [keyof typeof BUDGET_OPTIONS]),
   company: z.enum(Object.keys(COMPANY_OPTIONS) as [keyof typeof COMPANY_OPTIONS]),
   distance: z.enum(Object.keys(DISTANCE_OPTIONS) as [keyof typeof DISTANCE_OPTIONS]),
+  // Defaults to empty so answers saved before this question existed still load.
+  sources: z.array(z.string().trim().min(1)).max(30).default([]),
   notes: z.string().max(500),
 });
 
@@ -78,6 +94,7 @@ export const EMPTY_PREFERENCES: Preferences = {
   budget: "any",
   company: "any",
   distance: "city",
+  sources: [],
   notes: "",
 };
 
@@ -91,6 +108,7 @@ export function describePreferences(p: Preferences): string {
     `Usually going: ${COMPANY_OPTIONS[p.company]}`,
     `Travel: ${DISTANCE_OPTIONS[p.distance]}`,
   ];
+  if (p.sources.length) lines.push(`Sites they already use and trust: ${p.sources.join(", ")}`);
   if (p.notes.trim()) lines.push(`Other notes from them: ${p.notes.trim()}`);
   return lines.join("\n");
 }

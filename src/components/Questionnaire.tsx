@@ -12,6 +12,7 @@ import {
   COMPANY_OPTIONS,
   DISTANCE_OPTIONS,
   INTEREST_OPTIONS,
+  SOURCE_OPTIONS,
   TIME_OPTIONS,
   type Preferences,
 } from "@/lib/preferences";
@@ -25,7 +26,7 @@ interface Props {
 }
 
 /** Question order. Each step renders one block below. */
-const STEPS = ["location", "interests", "times", "budget", "company", "notes"] as const;
+const STEPS = ["location", "interests", "times", "budget", "company", "sources", "notes"] as const;
 type Step = (typeof STEPS)[number];
 
 const QUESTIONS: Record<Step, { title: string; hint: string }> = {
@@ -34,6 +35,7 @@ const QUESTIONS: Record<Step, { title: string; hint: string }> = {
   times: { title: "When do you usually go out?", hint: "Pick any that apply. Skip if it varies." },
   budget: { title: "What's your usual budget?", hint: "Per event, roughly." },
   company: { title: "Who do you usually go with, and how far will you travel?", hint: "This helps pick the right vibe." },
+  sources: { title: "Where do you usually find events?", hint: "Pick any sites you use and we'll check them first. Skip if you're not sure." },
   notes: { title: "Anything else we should know?", hint: "Optional. Favourite artists, venues, accessibility needs, things you hate…" },
 };
 
@@ -62,6 +64,7 @@ export default function Questionnaire({ initial, onComplete, onCancel }: Props) 
   const [prefs, setPrefs] = useState<Preferences>(initial);
   const [stepIndex, setStepIndex] = useState(0);
   const [customInterest, setCustomInterest] = useState("");
+  const [customSource, setCustomSource] = useState("");
 
   const step = STEPS[stepIndex];
   const isLast = stepIndex === STEPS.length - 1;
@@ -73,21 +76,31 @@ export default function Questionnaire({ initial, onComplete, onCancel }: Props) 
     (step === "interests" && prefs.interests.length > 0) ||
     (step !== "location" && step !== "interests");
 
-  /** Add the typed interest as a chip, ignoring blanks and case-insensitive duplicates. */
-  function addCustomInterest() {
-    const value = customInterest.trim().replace(/,$/, "");
-    if (value && !prefs.interests.some((i) => i.toLowerCase() === value.toLowerCase())) {
-      update({ interests: [...prefs.interests, value] });
+  /** Append a typed value to a list answer, ignoring blanks and case-insensitive duplicates. */
+  function addCustom(field: "interests" | "sources", raw: string) {
+    const value = raw.trim().replace(/,$/, "");
+    if (value && !prefs[field].some((i) => i.toLowerCase() === value.toLowerCase())) {
+      update({ [field]: [...prefs[field], value] });
     }
-    setCustomInterest("");
   }
 
-  function onCustomKey(e: KeyboardEvent<HTMLInputElement>) {
+  const addCustomInterest = () => {
+    addCustom("interests", customInterest);
+    setCustomInterest("");
+  };
+
+  const addCustomSource = () => {
+    addCustom("sources", customSource);
+    setCustomSource("");
+  };
+
+  /** Enter or comma commits the typed value as a chip. */
+  const commitOnKey = (commit: () => void) => (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" || e.key === ",") {
       e.preventDefault();
-      addCustomInterest();
+      commit();
     }
-  }
+  };
 
   /** Advance a step, or finish and return trimmed answers on the last one. */
   function next() {
@@ -96,8 +109,9 @@ export default function Questionnaire({ initial, onComplete, onCancel }: Props) 
     else setStepIndex(stepIndex + 1);
   }
 
-  // Interests the user typed themselves, shown as extra chips after the presets.
+  // Values the user typed themselves, shown as extra chips after the presets.
   const customInterests = prefs.interests.filter((i) => !(INTEREST_OPTIONS as readonly string[]).includes(i));
+  const customSources = prefs.sources.filter((s) => !(SOURCE_OPTIONS as readonly string[]).includes(s));
 
   return (
     <section className="rounded-xl border border-line bg-panel p-6">
@@ -149,7 +163,7 @@ export default function Questionnaire({ initial, onComplete, onCancel }: Props) 
             <input
               value={customInterest}
               onChange={(e) => setCustomInterest(e.target.value)}
-              onKeyDown={onCustomKey}
+              onKeyDown={commitOnKey(addCustomInterest)}
               onBlur={addCustomInterest}
               placeholder="Add your own, e.g. salsa, jazz, board games"
               className="mt-4 w-full rounded-lg border border-line bg-background px-3 py-2"
@@ -210,6 +224,35 @@ export default function Questionnaire({ initial, onComplete, onCancel }: Props) 
               ))}
             </div>
           </div>
+        )}
+
+        {step === "sources" && (
+          <>
+            <div className="flex flex-wrap gap-2">
+              {SOURCE_OPTIONS.map((option) => (
+                <Chip
+                  key={option}
+                  selected={prefs.sources.includes(option)}
+                  onClick={() => update({ sources: toggle(prefs.sources, option) })}
+                >
+                  {option}
+                </Chip>
+              ))}
+              {customSources.map((option) => (
+                <Chip key={option} selected onClick={() => update({ sources: toggle(prefs.sources, option) })}>
+                  {option} ×
+                </Chip>
+              ))}
+            </div>
+            <input
+              value={customSource}
+              onChange={(e) => setCustomSource(e.target.value)}
+              onKeyDown={commitOnKey(addCustomSource)}
+              onBlur={addCustomSource}
+              placeholder="Add another site or venue"
+              className="mt-4 w-full rounded-lg border border-line bg-background px-3 py-2"
+            />
+          </>
         )}
 
         {step === "notes" && (
