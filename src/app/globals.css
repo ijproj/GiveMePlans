@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
+/* Light theme only: colours stay the same whatever the device's dark-mode setting. */
+
 :root {
+  color-scheme: light;
   --background: #fafaf9;
   --foreground: #1c1917;
   --panel: #ffffff;
@@ -8,18 +11,6 @@
   --muted: #78716c;
   --accent: #c2410c;
   --accent-soft: #ffedd5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0c0a09;
-    --foreground: #f5f5f4;
-    --panel: #1c1917;
-    --line: #292524;
-    --muted: #a8a29e;
-    --accent: #fb923c;
-    --accent-soft: #431407;
-  }
 }
 
 @theme inline {
