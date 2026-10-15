@@ -160,7 +160,7 @@ export default function Home() {
       )}
 
       {!showQuestionnaire && error && (
-        <p role="alert" className="mt-8 rounded-lg border border-red-400 bg-red-50 p-4 text-red-800 dark:bg-red-950 dark:text-red-200">
+        <p role="alert" className="mt-8 rounded-lg border border-red-400 bg-red-50 p-4 text-red-800">
           {error}
         </p>
       )}
